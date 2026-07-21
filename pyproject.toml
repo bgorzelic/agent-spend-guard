@@ -1,0 +1,30 @@
+[project]
+name = "agent-spend-guard"
+version = "0.1.0"
+description = "Approval gates and an audit trail for agent tool calls. Refuses by default."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Brian Gorzelic" }]
+keywords = ["agent", "guardrails", "policy", "audit", "mcp", "approval"]
+dependencies = []
+
+[project.scripts]
+spend-guard = "spend_guard.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/bgorzelic/agent-spend-guard"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/spend_guard"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

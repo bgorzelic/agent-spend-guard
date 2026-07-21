@@ -1,0 +1,14 @@
+# Anything not listed here is refused. That is the point.
+
+[tools]
+allow = ["read_file", "list_files", "search", "git_status", "git_diff", "run_tests"]
+flag  = ["send_email", "post_message", "open_pull_request", "deploy", "write_file"]
+stop  = ["make_payment", "delete_data", "rotate_credentials", "teardown_infra", "sign_contract"]
+
+[escalate]
+# Substrings in arguments that push a routine call up to flag.
+markers = ["production", "prod-", "customer", "invoice"]
+
+[limits]
+# Any call carrying an amount above this is stopped, whatever its tool tier.
+spend = 25.0
