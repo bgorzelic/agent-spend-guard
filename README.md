@@ -1,20 +1,35 @@
 # agent-spend-guard
 
-Approval gates and an audit trail for agent tool calls. **Refuses by default.**
+**Approval gates and an audit trail for agent tool calls. Refuses by default.**
+
+![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?style=flat&logo=python&logoColor=white)
+![Dependencies](https://img.shields.io/badge/dependencies-none-2ea44f?style=flat)
+![Version](https://img.shields.io/badge/version-0.1.0-555?style=flat)
+![License](https://img.shields.io/badge/license-MIT-blue?style=flat)
 
 Your agent has a list of tools. Nothing sits between "the model decided to call
-`make_payment`" and the payment. This puts something there.
+`make_payment`" and the payment. This puts something there — and anything it
+does not recognise is refused, not waved through:
 
-```python
-from spend_guard import Guard, load
+```console
+$ spend-guard check make_payment '{"amount": 9}'
+STOP   make_payment
+        'make_payment' is irreversible or financial
 
-guard = Guard(load("spend-guard.toml"), log_path="var/audit.jsonl")
+$ spend-guard check make_payment '{"amount": 900}'
+STOP   make_payment
+        amount 900 exceeds the 25 limit
 
-decision = guard.check("make_payment", {"amount": 900})
-if decision.blocked:
-    raise PermissionError(decision.reason)
-    # 'make_payment' is irreversible or financial
+$ spend-guard check read_file '{"path": "/srv/production/db.conf"}'
+FLAG   read_file
+        'read_file' is routine but its arguments mention 'production'
+
+$ spend-guard check wire_transfer '{}'
+STOP   wire_transfer
+        'wire_transfer' is not in the policy — refusing rather than guessing
 ```
+
+Exit code is `2` for `STOP`, so it composes into shell checks and CI.
 
 ## Why this and not a prompt
 
@@ -32,6 +47,30 @@ Three tiers:
 **An unrecognised tool is `STOP`.** A guard that fails open is not a guard. Add
 a tool to your agent and forget to classify it, and it is refused rather than
 quietly permitted.
+
+## How it works
+
+Classification is pure and deterministic — no I/O, no clock, no network. Every
+decision is a function of the policy and the call, and every decision writes
+one audit line:
+
+```mermaid
+flowchart LR
+    A[tool call] --> B{amount over limit?}
+    B -- yes --> S[STOP]
+    B -- no --> C{in stop list?}
+    C -- yes --> S
+    C -- no --> D{in flag list?}
+    D -- yes --> F[FLAG]
+    D -- no --> E{in allow list?}
+    E -- no --> S
+    E -- yes --> G{marker in args?}
+    G -- yes --> F
+    G -- no --> AL[ALLOW]
+    S --> L[audit line]
+    F --> L
+    AL --> L
+```
 
 ## Policy
 
@@ -59,34 +98,29 @@ Two escalation rules beyond the tool lists:
   `STOP` regardless of its tool tier, because a "routine" call that moves real
   money is not routine.
 
-## Interrogate the policy without running an agent
+`spend-guard explain` prints the active policy without running anything:
 
 ```console
-$ spend-guard check make_payment '{"amount": 900}'
-STOP   make_payment
-       'make_payment' is irreversible or financial
-
-$ spend-guard check read_file '{"path": "/srv/production/db.conf"}'
-FLAG   read_file
-       'read_file' is routine but its arguments mention 'production'
-
 $ spend-guard explain
 allow (6): git_diff, git_status, list_files, read_file, run_tests, search
-...
+flag  (5): deploy, open_pull_request, post_message, send_email, write_file
+stop  (5): delete_data, make_payment, rotate_credentials, sign_contract, teardown_infra
+escalate markers: production, prod-, customer, invoice
+spend limit: 25.0
+
 Anything not listed above is refused.
 ```
-
-Exit code is `2` for `STOP`, so it composes into shell checks and CI.
 
 ## The audit trail
 
 Every decision appends one JSON line — including the refusals, which are the
-ones you most need afterwards.
+ones you most need afterwards:
 
 ```json
-{"phase":"intent","tool":"make_payment","tier":"stop",
- "reason":"'make_payment' is irreversible or financial",
- "args":{"amount":900,"api_key":"***redacted***"},"ts":"2026-07-21T08:00:00+00:00"}
+{"phase": "intent", "tool": "make_payment", "tier": "stop",
+ "reason": "amount 900 exceeds the 25 limit", "matched": "spend_limit:25",
+ "args": {"amount": 900, "api_key": "***redacted***"},
+ "ts": "2026-07-21T08:00:00+00:00"}
 ```
 
 Redaction is **key-based, not value-based**: anything under a key containing
@@ -94,14 +128,19 @@ Redaction is **key-based, not value-based**: anything under a key containing
 or `session` is replaced, whatever it holds. Nested dicts and lists included.
 A log that leaks credentials is a liability, not a record.
 
-## Install
+## Quick start
+
+Not on PyPI yet — install from a clone:
 
 ```console
-pip install agent-spend-guard
+git clone https://github.com/bgorzelic/agent-spend-guard.git
+cd agent-spend-guard
+pip install .          # or: uv pip install -e .
+spend-guard explain    # uses the spend-guard.toml in this repo
 ```
 
 Python 3.11+. **No dependencies** — it sits in the path of every tool call, so
-it brings nothing with it.
+it brings nothing with it. Tests: `pytest` (31 tests).
 
 ## Integrating
 
@@ -109,6 +148,10 @@ it brings nothing with it.
 result:
 
 ```python
+from spend_guard import Guard, load
+
+guard = Guard(load("spend-guard.toml"), log_path="var/audit.jsonl")
+
 decision = guard.check(tool_name, tool_args)
 if decision.blocked:
     return {"status": "blocked", "reason": decision.reason}
@@ -118,6 +161,12 @@ guard.record_result(tool_name, decision, result)
 ```
 
 Framework-agnostic on purpose. Adapters wrap this; it does not wrap them.
+
+## Status
+
+`0.1.0` — the core (policy, classification, guard, CLI, redaction) is built and
+tested. No framework adapters ship yet, and the package is not published to
+PyPI.
 
 ## License
 
